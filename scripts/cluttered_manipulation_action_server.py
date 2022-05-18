@@ -137,6 +137,29 @@ class PublishRelativeCratePose(smach.State):
         self.crate_pose_pub.publish(crate_pose)
         return "success"
 
+class PublishRelativeCratePose2(smach.State):
+    def __init__(self, ):
+        smach.State.__init__(self, outcomes=["success", "failed"],
+                                    output_keys=["crate_pose"])
+
+        self.crate_pose_pub = rospy.Publisher(
+            "/mcr_navigation/direct_base_controller/input_pose",
+            PoseStamped,
+            queue_size=10
+        )
+
+    def execute(self, userdata):
+        rospy.loginfo("Publish relative crate pose to move base")
+        crate_pose = PoseStamped()
+        crate_pose.header.frame_id="base_link_static"
+        crate_pose.header.stamp = rospy.Time.now()
+        crate_pose.pose.position.y = 0     # Hard-coded: Put relative location of the crate here
+        crate_pose.pose.orientation.w = 1
+        userdata.crate_pose = crate_pose
+        rospy.loginfo(crate_pose)
+        self.crate_pose_pub.publish(crate_pose)
+        return "success"
+
 
 class GetCrateCenterPose(smach.State):
     def __init__(self, ):
@@ -175,158 +198,158 @@ def main():
     # Open the container
     with sm:
 
-        # smach.StateMachine.add(
-        #     "PERCEIVE_WS02",
-        #     gas.perceive_location(),
-        #     transitions={"success": "GET_PERCEIVED_OBJECT_LIST", "failed": "OVERALL_FAILURE"}
+        smach.StateMachine.add(
+            "PERCEIVE_WS02",
+            gas.perceive_location(),
+            transitions={"success": "GET_PERCEIVED_OBJECT_LIST", "failed": "OVERALL_FAILURE"}
 
-        # )
+        )
 
-        # smach.StateMachine.add(
-        #     "GET_PERCEIVED_OBJECT_LIST",
-        #     GetObjectList(),
-        #     transitions={"success": "GET_OBJECT_POSE", "failed": "OVERALL_FAILURE"}
+        smach.StateMachine.add(
+            "GET_PERCEIVED_OBJECT_LIST",
+            GetObjectList(),
+            transitions={"success": "GET_OBJECT_POSE", "failed": "OVERALL_FAILURE"}
 
-        # )
+        )
 
-        # smach.StateMachine.add(
-        #     "GET_OBJECT_POSE",
-        #     LoopThroughPerceivedObjectList(),
-        #     transitions={"tried_all": "MOVE_ARM_DEFAULT", "pose_set": "PUBLISH_OBJECT_POSE"}
+        smach.StateMachine.add(
+            "GET_OBJECT_POSE",
+            LoopThroughPerceivedObjectList(),
+            transitions={"tried_all": "PERCEIVE_WS02", "pose_set": "PUBLISH_OBJECT_POSE"}
 
-        # )
+        )
 
-        # smach.StateMachine.add(
-        #     "PUBLISH_OBJECT_POSE",
-        #     PublishObjectPose(),
-        #     transitions={"success": "CHECK_PRE_GRASP_POSE", "failed": "OVERALL_FAILURE"}
+        smach.StateMachine.add(
+            "PUBLISH_OBJECT_POSE",
+            PublishObjectPose(),
+            transitions={"success": "CHECK_PRE_GRASP_POSE", "failed": "OVERALL_FAILURE"}
 
-        # )
+        )
 
-        # smach.StateMachine.add(
-        #     "CHECK_PRE_GRASP_POSE",
-        #     gbs.send_and_wait_events_combined(
-        #         event_in_list=[
-        #             ("/pregrasp_planner_node/event_in", "e_start")
-        #         ],
-        #         event_out_list=[
-        #             (
-        #                 "/pregrasp_planner_node/event_out",
-        #                 "e_success",
-        #                 True,
-        #             )
-        #         ],
-        #         timeout_duration=20,
-        #     ),
-        #     transitions={
-        #         "success": "GO_TO_PRE_GRASP_POSE",
-        #         "timeout": "OVERALL_FAILURE",
-        #         "failure": "GET_OBJECT_POSE",
-        #     },
-        # )
+        smach.StateMachine.add(
+            "CHECK_PRE_GRASP_POSE",
+            gbs.send_and_wait_events_combined(
+                event_in_list=[
+                    ("/pregrasp_planner_node/event_in", "e_start")
+                ],
+                event_out_list=[
+                    (
+                        "/pregrasp_planner_node/event_out",
+                        "e_success",
+                        True,
+                    )
+                ],
+                timeout_duration=20,
+            ),
+            transitions={
+                "success": "GO_TO_PRE_GRASP_POSE",
+                "timeout": "OVERALL_FAILURE",
+                "failure": "GET_OBJECT_POSE",
+            },
+        )
 
-        # smach.StateMachine.add(
-        #     "GO_TO_PRE_GRASP_POSE",
-        #     gbs.send_and_wait_events_combined(
-        #         event_in_list=[
-        #             ("/waypoint_trajectory_generation/event_in", "e_start")
-        #         ],
-        #         event_out_list=[
-        #             (
-        #                 "/waypoint_trajectory_generation/event_out",
-        #                 "e_success",
-        #                 True,
-        #             )
-        #         ],
-        #         timeout_duration=20,
-        #     ),
-        #     transitions={
-        #         "success": "CLOSE_GRIPPER",
-        #         "timeout": "OVERALL_FAILURE",
-        #         "failure": "OVERALL_FAILURE",
-        #     },
-        # )
+        smach.StateMachine.add(
+            "GO_TO_PRE_GRASP_POSE",
+            gbs.send_and_wait_events_combined(
+                event_in_list=[
+                    ("/waypoint_trajectory_generation/event_in", "e_start")
+                ],
+                event_out_list=[
+                    (
+                        "/waypoint_trajectory_generation/event_out",
+                        "e_success",
+                        True,
+                    )
+                ],
+                timeout_duration=20,
+            ),
+            transitions={
+                "success": "CLOSE_GRIPPER",
+                "timeout": "OVERALL_FAILURE",
+                "failure": "OVERALL_FAILURE",
+            },
+        )
 
-        # smach.StateMachine.add(
-        #     "CLOSE_GRIPPER",
-        #     gms.control_gripper("close"),
-        #     transitions={"succeeded": "MOVE_ARM_STAGE_INTERMEDIATE"}
-        # )
+        smach.StateMachine.add(
+            "CLOSE_GRIPPER",
+            gms.control_gripper("close"),
+            transitions={"succeeded": "MOVE_ARM_STAGE_INTERMEDIATE"}
+        )
 
-        # smach.StateMachine.add(
-        #     "MOVE_ARM_STAGE_INTERMEDIATE",
-        #     gms.move_arm("stage_intermediate"),
-        #     transitions={"succeeded": "MOVE_ARM_PLATFORM_INTERMEDIATE_PRE", "failed": "OVERALL_FAILURE"}
-        # )
+        smach.StateMachine.add(
+            "MOVE_ARM_STAGE_INTERMEDIATE",
+            gms.move_arm("stage_intermediate"),
+            transitions={"succeeded": "MOVE_ARM_PLATFORM_INTERMEDIATE_PRE", "failed": "OVERALL_FAILURE"}
+        )
 
-        # smach.StateMachine.add(
-        #     "MOVE_ARM_PLATFORM_INTERMEDIATE_PRE",
-        #     gms.move_arm("platform_middle_pre"),
-        #     transitions={"succeeded": "MOVE_ARM_PLATFORM_INTERMEDIATE", "failed": "OVERALL_FAILURE"}
-        # )
+        smach.StateMachine.add(
+            "MOVE_ARM_PLATFORM_INTERMEDIATE_PRE",
+            gms.move_arm("platform_middle_pre"),
+            transitions={"succeeded": "MOVE_ARM_PLATFORM_INTERMEDIATE", "failed": "OVERALL_FAILURE"}
+        )
 
-        # smach.StateMachine.add(
-        #     "MOVE_ARM_PLATFORM_INTERMEDIATE",
-        #     gms.move_arm("platform_middle"),
-        #     transitions={"succeeded": "OPEN_GRIPPER", "failed": "OVERALL_FAILURE"}
-        # )
+        smach.StateMachine.add(
+            "MOVE_ARM_PLATFORM_INTERMEDIATE",
+            gms.move_arm("platform_middle"),
+            transitions={"succeeded": "OPEN_GRIPPER", "failed": "OVERALL_FAILURE"}
+        )
 
-        # smach.StateMachine.add(
-        #     "OPEN_GRIPPER",
-        #     gms.control_gripper("open"),
-        #     transitions={"succeeded": "MOVE_ARM_DEFAULT"}
-        # )
+        smach.StateMachine.add(
+            "OPEN_GRIPPER",
+            gms.control_gripper("open"),
+            transitions={"succeeded": "MOVE_ARM_DEFAULT"}
+        )
 
-        # smach.StateMachine.add(
-        #     "MOVE_ARM_DEFAULT",
-        #     gms.move_arm("look_at_workspace_from_near"),
-        #     transitions={"succeeded": "STOP_WAYPOINT", "failed": "OVERALL_FAILURE"}
-        # )
+        smach.StateMachine.add(
+            "MOVE_ARM_DEFAULT",
+            gms.move_arm("look_at_workspace_from_near"),
+            transitions={"succeeded": "STOP_WAYPOINT", "failed": "OVERALL_FAILURE"}
+        )
 
-        # smach.StateMachine.add(
-        #     "STOP_WAYPOINT",
-        #     gbs.send_event(
-        #         [("/waypoint_trajectory_generation/event_in", "e_stop")]
-        #     ),
-        #     transitions={"success": "STOP_PRE_GRASP_PLANNAR"},
-        # )
+        smach.StateMachine.add(
+            "STOP_WAYPOINT",
+            gbs.send_event(
+                [("/waypoint_trajectory_generation/event_in", "e_stop")]
+            ),
+            transitions={"success": "STOP_PRE_GRASP_PLANNAR"},
+        )
 
-        # smach.StateMachine.add(
-        #     "STOP_PRE_GRASP_PLANNAR",
-        #     gbs.send_event(
-        #         [("/pregrasp_planner_node/event_in", "e_stop")]
-        #     ),
-        #     transitions={"success": "PUBLISH_RELATIVE_CRATE_LOCATION"},
-        # )
+        smach.StateMachine.add(
+            "STOP_PRE_GRASP_PLANNAR",
+            gbs.send_event(
+                [("/pregrasp_planner_node/event_in", "e_stop")]
+            ),
+            transitions={"success": "PUBLISH_RELATIVE_CRATE_LOCATION"},
+        )
 
-        # smach.StateMachine.add(
-        #     "PUBLISH_RELATIVE_CRATE_LOCATION",
-        #     PublishRelativeCratePose(),
-        #     transitions={"success": "MOVE_BASE_TO_CRATE", "failed": "OVERALL_FAILURE"}
+        smach.StateMachine.add(
+            "PUBLISH_RELATIVE_CRATE_LOCATION",
+            PublishRelativeCratePose(),
+            transitions={"success": "MOVE_BASE_TO_CRATE", "failed": "OVERALL_FAILURE"}
             
-        # )
+        )
 
-        # smach.StateMachine.add(
-        #     "MOVE_BASE_TO_CRATE",
-        #     gbs.send_and_wait_events_combined(
-        #         event_in_list=[
-        #             ("/mcr_navigation/direct_base_controller/coordinator/event_in", "e_start")
-        #         ],
-        #         event_out_list=[
-        #             (
-        #                 "/mcr_navigation/direct_base_controller/coordinator/event_out",
-        #                 "e_success",
-        #                 True,
-        #             )
-        #         ],
-        #         timeout_duration=20,
-        #     ),
-        #     transitions={
-        #         "success": "DETECT_CRATE",
-        #         "timeout": "OVERALL_FAILURE",
-        #         "failure": "OVERALL_FAILURE",
-        #     },
-        # )
+        smach.StateMachine.add(
+            "MOVE_BASE_TO_CRATE",
+            gbs.send_and_wait_events_combined(
+                event_in_list=[
+                    ("/mcr_navigation/direct_base_controller/coordinator/event_in", "e_start")
+                ],
+                event_out_list=[
+                    (
+                        "/mcr_navigation/direct_base_controller/coordinator/event_out",
+                        "e_success",
+                        True,
+                    )
+                ],
+                timeout_duration=20,
+            ),
+            transitions={
+                "success": "DETECT_CRATE",
+                "timeout": "OVERALL_FAILURE",
+                "failure": "OVERALL_FAILURE",
+            },
+        )
 
         smach.StateMachine.add(
             "DETECT_CRATE",
@@ -359,10 +382,48 @@ def main():
         smach.StateMachine.add(
             "PUBLISH_CRATE_POSE",
             PublishObjectPose(),
-            transitions={"success": "CHECK_PRE_CRATE_POSE", "failed": "OVERALL_FAILURE"}
+            transitions={"success": "STOP_CRATE_DETECTION", "failed": "OVERALL_FAILURE"}
 
         )
 
+        smach.StateMachine.add(
+            "STOP_CRATE_DETECTION",
+            gbs.send_event(
+                [("/mir_perception/crate_segmentation/event_in", "e_stop")]
+            ),
+            transitions={"success": "MOVE_ARM_STAGE_INTERMEDIATE_PICKUP"},
+        )
+    
+
+        smach.StateMachine.add(
+            "MOVE_ARM_STAGE_INTERMEDIATE_PICKUP",
+            gms.move_arm("stage_intermediate"),
+            transitions={"succeeded": "MOVE_ARM_PLATFORM_INTERMEDIATE_PRE_PICKUP", "failed": "OVERALL_FAILURE"}
+        )
+
+        smach.StateMachine.add(
+            "MOVE_ARM_PLATFORM_INTERMEDIATE_PRE_PICKUP",
+            gms.move_arm("platform_middle_pre"),
+            transitions={"succeeded": "MOVE_ARM_PLATFORM_INTERMEDIATE_PICKUP", "failed": "OVERALL_FAILURE"}
+        )
+
+        smach.StateMachine.add(
+            "MOVE_ARM_PLATFORM_INTERMEDIATE_PICKUP",
+            gms.move_arm("platform_middle"),
+            transitions={"succeeded": "CLOSE_GRIPPER_PICKUP", "failed": "OVERALL_FAILURE"}
+        )
+
+        smach.StateMachine.add(
+            "CLOSE_GRIPPER_PICKUP",
+            gms.control_gripper("close"),
+            transitions={"succeeded": "MOVE_ARM_STAGE_INTERMEDIATE_PICKUP_2"}
+        )
+
+        smach.StateMachine.add(
+            "MOVE_ARM_STAGE_INTERMEDIATE_PICKUP_2",
+            gms.move_arm("stage_intermediate"),
+            transitions={"succeeded": "CHECK_PRE_CRATE_POSE", "failed": "OVERALL_FAILURE"}
+        )
 
         smach.StateMachine.add(
             "CHECK_PRE_CRATE_POSE",
@@ -402,11 +463,53 @@ def main():
                 timeout_duration=20,
             ),
             transitions={
-                "success": "OVERALL_SUCCESS",
+                "success": "OPEN_GRIPPER_PICKUP",
                 "timeout": "OVERALL_FAILURE",
                 "failure": "OVERALL_FAILURE",
             },
         )
+
+        smach.StateMachine.add(
+            "OPEN_GRIPPER_PICKUP",
+            gms.control_gripper("open"),
+            transitions={"succeeded": "MOVE_ARM_DEFAULT_PICKUP"}
+        )
+
+        smach.StateMachine.add(
+            "MOVE_ARM_DEFAULT_PICKUP",
+            gms.move_arm("folded"),
+            transitions={"succeeded": "PUBLISH_RELATIVE_CRATE_LOCATION2", "failed": "OVERALL_FAILURE"}
+        )
+
+        smach.StateMachine.add(
+            "PUBLISH_RELATIVE_CRATE_LOCATION2",
+            PublishRelativeCratePose2(),
+            transitions={"success": "MOVE_BASE_TO_CRATE2", "failed": "OVERALL_FAILURE"}
+            
+        )
+
+        smach.StateMachine.add(
+            "MOVE_BASE_TO_CRATE2",
+            gbs.send_and_wait_events_combined(
+                event_in_list=[
+                    ("/mcr_navigation/direct_base_controller/coordinator/event_in", "e_start")
+                ],
+                event_out_list=[
+                    (
+                        "/mcr_navigation/direct_base_controller/coordinator/event_out",
+                        "e_success",
+                        True,
+                    )
+                ],
+                timeout_duration=20,
+            ),
+            transitions={
+                "success": "PERCEIVE_WS02",
+                "timeout": "OVERALL_FAILURE",
+                "failure": "OVERALL_FAILURE",
+            },
+        )
+
 
     # Create a thread to execute the smach container
     smach_thread = threading.Thread(target=sm.execute)
