@@ -3,6 +3,8 @@
 import threading
 from time import sleep
 
+from sympy import true, use
+
 # import of generic states
 import mir_states.common.action_states as gas
 import mir_states.common.manipulation_states as gms
@@ -12,6 +14,8 @@ import mcr_states.common.basic_states as gbs
 import rospy
 from geometry_msgs.msg import PoseStamped, Pose
 from std_msgs.msg import String
+from metrics_refbox_msgs.msg import Command as CommandMsg
+from metrics_refbox_msgs.msg import ClutteredPickResult as cpr
 
 from mas_perception_msgs.msg import ObjectList
 import smach
@@ -49,7 +53,8 @@ class LoopThroughPerceivedObjectList(smach.State):
 class PublishObjectPose(smach.State):
     def __init__(self, ):
         smach.State.__init__(self, outcomes=["success", "failed"],
-                                    input_keys=["object_pose", "crate_pose"])
+                                    input_keys=["object_pose", "crate_pose"],
+                                    output_keys=["object_name"])
 
         self.obj_pose_pub = rospy.Publisher(
             "/mcr_perception/object_selector/output/object_pose",
@@ -61,6 +66,7 @@ class PublishObjectPose(smach.State):
         rospy.loginfo("Publish pose")
         if userdata.object_pose:
             pose = userdata.object_pose.pose
+            userdata.object_name = userdata.object_pose.name
         elif userdata.crate_pose:
             pose = userdata.crate_pose
         rospy.loginfo(pose)
@@ -183,10 +189,39 @@ class GetCrateCenterPose(smach.State):
         userdata.crate_pose = self.crate_pose
         return "success"
 
+class PublishRefBoxFeedback():
+
+    def __init__(self, bool_picked):
+        smach.State.__init__(self, outcomes=["success", "failed"],
+                                    input_keys=["object_name", "num_object_picked"],
+                                    output_keys=["num_object_picked"])
+
+        self.crate_pose_pub = rospy.Publisher(
+            "/metrics_refbox_client/cluttered_pick_result",
+            cpr,
+            queue_size=10
+        )
+        self.obj_picked = bool_picked
+
+    def execute(self, userdata):
+        rospy.loginfo("Publish feedback to Refree Box Client")
+        f_msg = cpr()
+        f_msg.message_type = 1
+        f_msg.object_name= userdata.object_name
+        if self.obj_picked == True:
+            f_msg.action_completed = 1
+            userdata.num_object_picker += 1
+        else:
+            f_msg.action_completed = 2
+        return "success"
+
 
 def main():
+
     rospy.init_node("cluttered_manipulation_state_machine")
     
+    rospy.Subscriber('/metrics_refbox_client/command', CommandMsg, ref_box_listener_cb)
+
     # Create a SMACH state machine
     sm = smach.StateMachine(
         outcomes=["OVERALL_FAILURE", "OVERALL_PREEMPT", "OVERALL_SUCCESS"]
@@ -194,15 +229,17 @@ def main():
 
     sm.userdata.object_list = []
     sm.userdata.object_index = 0
+    sm.userdata.num_object_picked = 0
 
     # Open the container
     with sm:
 
         smach.StateMachine.add(
-            "PERCEIVE_WS02",
-            gas.perceive_location(),
-            transitions={"success": "GET_PERCEIVED_OBJECT_LIST", "failed": "OVERALL_FAILURE"}
-
+            "START_PERCEIVE",
+            gbs.send_event(
+                [("/cluttered_picking/event_in", "e_start")]
+            ),
+            transitions={"success": "GET_PERCEIVED_OBJECT_LIST"}
         )
 
         smach.StateMachine.add(
@@ -213,9 +250,18 @@ def main():
         )
 
         smach.StateMachine.add(
+            "STOP_PERCEIVE",
+            gbs.send_event(
+                [("/cluttered_picking/event_in", "e_stop")]
+            ),
+            transitions={"success": "GET_OBJECT_POSE"}
+        )
+
+
+        smach.StateMachine.add(
             "GET_OBJECT_POSE",
             LoopThroughPerceivedObjectList(),
-            transitions={"tried_all": "PERCEIVE_WS02", "pose_set": "PUBLISH_OBJECT_POSE"}
+            transitions={"tried_all": "PERCEIVE", "pose_set": "PUBLISH_OBJECT_POSE"}
 
         )
 
@@ -319,8 +365,15 @@ def main():
             gbs.send_event(
                 [("/pregrasp_planner_node/event_in", "e_stop")]
             ),
-            transitions={"success": "PUBLISH_RELATIVE_CRATE_LOCATION"},
+            transitions={"success": "PUBLISH_REF_BOX_FEEDBACK"},
         )
+
+        smach.StateMachine.add(
+            "PUBLISH_REF_BOX_FEEDBACK",
+            PublishRefBoxFeedback(bool_picked=True),
+            transitions={"success": "PUBLISH_RELATIVE_CRATE_LOCATION", "failed": "OVERALL_FAILURE"}
+        )
+
 
         smach.StateMachine.add(
             "PUBLISH_RELATIVE_CRATE_LOCATION",
@@ -478,7 +531,13 @@ def main():
         smach.StateMachine.add(
             "MOVE_ARM_DEFAULT_PICKUP",
             gms.move_arm("folded"),
-            transitions={"succeeded": "PUBLISH_RELATIVE_CRATE_LOCATION2", "failed": "OVERALL_FAILURE"}
+            transitions={"succeeded": "PUBLISH_REF_BOX_FEEDBACK2", "failed": "OVERALL_FAILURE"}
+        )
+
+        smach.StateMachine.add(
+            "PUBLISH_REF_BOX_FEEDBACK2",
+            PublishRefBoxFeedback(bool_picked=False),
+            transitions={"success": "PUBLISH_RELATIVE_CRATE_LOCATION2", "failed": "OVERALL_FAILURE"}
         )
 
         smach.StateMachine.add(
@@ -512,17 +571,22 @@ def main():
 
 
     # Create a thread to execute the smach container
-    smach_thread = threading.Thread(target=sm.execute)
-    smach_thread.start()
 
-    while not rospy.is_shutdown() and smach_thread.isAlive():
-        rospy.sleep(1.0)
-    if rospy.is_shutdown():
-        rospy.logwarn("ctrl + c detected!!! preempting smach execution")
-        # Request the container to preempt
-        sm.request_preempt()
-    smach_thread.join()
+    def ref_box_listener_cb(msg):
+    
+        while msg.task == 5:
 
+            smach_thread = threading.Thread(target=sm.execute)
+            smach_thread.start()
+
+            while not rospy.is_shutdown() and smach_thread.isAlive():
+                rospy.sleep(1.0)
+
+            if rospy.is_shutdown() or msg.command == 2:
+                rospy.logwarn("preempting smach execution")
+                # Request the container to preempt
+                sm.request_preempt()
+            smach_thread.join()
 
 if __name__ == "__main__":
     main()
